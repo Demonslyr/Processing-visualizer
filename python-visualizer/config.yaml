@@ -1,0 +1,32 @@
+# Default configuration for Spectrum Visualizer
+
+audio:
+  device: "default"  # Use "default" or specific device name
+  sample_rate: 44100
+  buffer_size: 4096
+  channels: 1
+
+visualization:
+  mode: "modern"  # "legacy" or "modern"
+  width: 800
+  height: 300
+  fps: 60
+  bar_count: 50
+
+bar_animation:
+  amplitude_scale: 17
+  growth_rate: 0.028
+  decay_rate: 0.05
+  trigger_threshold: 4.0
+
+colors:
+  cycle_speed: 0.02
+  background: [0, 0, 0]
+
+particles:
+  enabled: true
+  count: 100
+
+window:
+  borderless: false
+  always_on_top: false
