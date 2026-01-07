@@ -10,6 +10,14 @@ import random
 from dataclasses import dataclass, field
 
 import pygame
+import pygame.gfxdraw
+
+# Track if gfxdraw is available
+_HAS_GFXDRAW = True
+try:
+    pygame.gfxdraw.filled_circle  # Test if available
+except AttributeError:
+    _HAS_GFXDRAW = False
 
 
 @dataclass
@@ -65,6 +73,7 @@ class ParticleSystem:
         width: int = 800,
         height: int = 300,
         color: tuple[int, int, int] = (245, 245, 245),
+        speed_multiplier: float = 1.0,
     ) -> None:
         """
         Initialize particle system.
@@ -74,11 +83,13 @@ class ParticleSystem:
             width: Canvas width
             height: Canvas height
             color: Particle color (RGB)
+            speed_multiplier: Velocity multiplier (1.0 = default, higher = faster)
         """
         self.width = width
         self.height = height
         self.color = color
         self.enabled = True
+        self.speed_multiplier = speed_multiplier
         
         # Create particles
         self._particles: list[Particle] = [
@@ -96,10 +107,14 @@ class ParticleSystem:
         if not self.enabled:
             return
         
+        # Base speed boost (original was too slow for smooth movement)
+        # Plus user-configurable multiplier
+        effective_speed = 8.0 * self.speed_multiplier
+        
         for p in self._particles:
-            # Update position
-            p.x += p.dx
-            p.y += p.dy
+            # Update position with speed multiplier
+            p.x += p.dx * effective_speed
+            p.y += p.dy * effective_speed
             
             # Wrap around edges (matching original)
             if p.x > self.width:
@@ -114,7 +129,7 @@ class ParticleSystem:
     
     def render(self, surface: pygame.Surface) -> None:
         """
-        Render all particles to surface.
+        Render all particles to surface with 2x supersampling for smooth movement.
         
         Args:
             surface: Pygame surface to draw on
@@ -122,29 +137,32 @@ class ParticleSystem:
         if not self.enabled:
             return
         
+        # Create 2x resolution surface for supersampling
+        scale = 2
+        ss_width = self.width * scale
+        ss_height = self.height * scale
+        
+        # Create supersampled surface with alpha
+        ss_surface = pygame.Surface((ss_width, ss_height), pygame.SRCALPHA)
+        
         for p in self._particles:
             # Create color with alpha
             color = (*self.color, p.alpha)
             
+            # Draw at 2x scale using round() for better positioning
+            x = round(p.x * scale)
+            y = round(p.y * scale)
+            size = max(1, round(p.size * scale))
+            
             # Draw particle
-            # Using gfxdraw for anti-aliased circles if available
-            try:
-                import pygame.gfxdraw
-                pygame.gfxdraw.filled_circle(
-                    surface,
-                    int(p.x),
-                    int(p.y),
-                    int(p.size),
-                    color
-                )
-            except (ImportError, AttributeError):
-                # Fallback to regular circle
-                pygame.draw.circle(
-                    surface,
-                    self.color,
-                    (int(p.x), int(p.y)),
-                    int(p.size)
-                )
+            if _HAS_GFXDRAW:
+                pygame.gfxdraw.filled_circle(ss_surface, x, y, size, color)
+            else:
+                pygame.draw.circle(ss_surface, self.color, (x, y), size)
+        
+        # Scale down to target size (provides anti-aliasing)
+        scaled = pygame.transform.smoothscale(ss_surface, (self.width, self.height))
+        surface.blit(scaled, (0, 0))
     
     def resize(self, width: int, height: int) -> None:
         """

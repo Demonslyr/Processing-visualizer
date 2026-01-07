@@ -127,6 +127,39 @@ def lerp_color(c1: Color, c2: Color, t: float) -> Color:
     )
 
 
+def brighten_saturate(color: Color, amount: float) -> Color:
+    """
+    Brighten and boost saturation of a color (opposite of washing out).
+    
+    Args:
+        color: Input color
+        amount: Effect intensity (0-1), higher = brighter and more saturated
+        
+    Returns:
+        Brightened and more saturated color
+    """
+    amount = max(0.0, min(1.0, amount))
+    
+    # Convert to HSV-like manipulation
+    # Find the dominant channel and boost separation from others
+    r, g, b = color.r, color.g, color.b
+    max_c = max(r, g, b)
+    min_c = min(r, g, b)
+    
+    # Increase brightness by pushing colors toward their max
+    brightness_boost = 1.0 + amount * 1.5  # Up to 150% brighter
+    
+    # Increase saturation by pushing colors apart from gray
+    avg = (r + g + b) / 3
+    sat_boost = 1.0 + amount * 2.5  # Up to 250% more saturated
+    
+    new_r = int(min(255, avg + (r - avg) * sat_boost * brightness_boost))
+    new_g = int(min(255, avg + (g - avg) * sat_boost * brightness_boost))
+    new_b = int(min(255, avg + (b - avg) * sat_boost * brightness_boost))
+    
+    return Color(max(0, new_r), max(0, new_g), max(0, new_b), color.a)
+
+
 class BaseRenderer(ABC):
     """
     Abstract base class for spectrum visualizers.

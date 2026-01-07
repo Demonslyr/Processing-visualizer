@@ -29,6 +29,7 @@ class VisualizationSettings:
     height: int = 300
     fps: int = 60
     bar_count: int = 50
+    beat_intensity: float = 0.6  # Beat effect intensity (0.0 - 2.0, default 0.6)
 
 
 @dataclass
@@ -46,6 +47,9 @@ class ParticleSettings:
     
     enabled: bool = True
     count: int = 100
+    speed: float = 0.2  # Back dust speed multiplier (default 0.2x)
+    front_enabled: bool = True  # Front dust layer (in front of bars)
+    front_speed: float = 0.4  # Front dust speed multiplier (default 0.4x)
 
 
 @dataclass
@@ -61,8 +65,8 @@ class BarAnimationSettings:
     # Trigger threshold: signal must be this many times current to trigger rise (1.0 - 5.0, default 2.5)
     trigger_threshold: float = 2.5
     
-    # Amplitude scaling factor for float audio (1 - 100, default 15)
-    amplitude_scale: float = 15.0
+    # Amplitude scaling factor (0 = Auto mode with original behavior, 1-100 for manual)
+    amplitude_scale: float = 0.0  # Default to Auto mode
 
 
 @dataclass

@@ -18,6 +18,7 @@ from spectrum_visualizer.visualization.base import (
     Color,
     rainbow_color_smooth,
     lerp_color,
+    brighten_saturate,
 )
 from spectrum_visualizer.visualization.particles import ParticleSystem
 
@@ -53,7 +54,7 @@ class ModernRenderer(BaseRenderer):
         # Animation state
         self._target_heights = np.zeros(self.num_bars, dtype=np.float32)
         self._current_heights = np.zeros(self.num_bars, dtype=np.float32)
-        self._smoothing = 0.15  # Height smoothing factor
+        # Note: smoothing now comes from settings.bar_animation (growth_rate/decay_rate)
         
         # Peak hold (falling dots above bars)
         self._peaks = np.zeros(self.num_bars, dtype=np.float32)
@@ -68,14 +69,29 @@ class ModernRenderer(BaseRenderer):
         self._reflection_enabled = True
         self._reflection_alpha = 0.3
         
-        # Particle system (subtle in modern mode)
-        self._particles = ParticleSystem(
-            count=settings.particles.count // 2,  # Fewer particles
+        # Back dust layer (80% of particles, behind everything)
+        back_count = int(settings.particles.count * 0.8)
+        self._particles_back = ParticleSystem(
+            count=back_count,
             width=self.width,
             height=self.height,
             color=(200, 200, 200),
+            speed_multiplier=settings.particles.speed,  # Default 0.2x
         )
-        self._particles.enabled = settings.particles.enabled
+        self._particles_back.enabled = settings.particles.enabled
+        
+        # Front dust layer (20% of particles, in front of bars)
+        front_count = int(settings.particles.count * 0.2)
+        self._particles_front = ParticleSystem(
+            count=front_count,
+            width=self.width,
+            height=self.height,
+            color=(255, 255, 255),  # Slightly brighter
+            speed_multiplier=settings.particles.front_speed,  # Default 0.4x
+        )
+        self._particles_front.enabled = settings.particles.front_enabled
+        
+        self._settings = settings  # Keep reference for dynamic updates
         
         # Color state
         self._hue_offset = 0.0
@@ -83,7 +99,7 @@ class ModernRenderer(BaseRenderer):
         
         # Beat response
         self._beat_pulse = 0.0
-        self._beat_decay = 0.95
+        self._beat_decay = 0.80  # Faster decay for snappier beat response
     
     def render(
         self,
@@ -100,9 +116,13 @@ class ModernRenderer(BaseRenderer):
         # Background with subtle gradient
         self._draw_background(surface)
         
-        # Draw particles (subtle, behind everything)
-        self._particles.update()
-        self._particles.render(surface)
+        # Update back particle speed from settings (allows runtime adjustment)
+        self._particles_back.speed_multiplier = self._settings.particles.speed
+        self._particles_back.enabled = self._settings.particles.enabled
+        
+        # Draw back dust (behind reflection and bars)
+        self._particles_back.update()
+        self._particles_back.render(surface)
         
         # Update bar heights with smoothing
         self._update_heights(analysis.bands)
@@ -123,6 +143,13 @@ class ModernRenderer(BaseRenderer):
         
         # Draw base line
         self._draw_base_line(surface)
+        
+        # Draw front dust (in front of everything, toggleable)
+        self._particles_front.speed_multiplier = self._settings.particles.front_speed
+        self._particles_front.enabled = self._settings.particles.front_enabled
+        if self._particles_front.enabled:
+            self._particles_front.update()
+            self._particles_front.render(surface)
     
     def _draw_background(self, surface: pygame.Surface) -> None:
         """Draw gradient background."""
@@ -139,23 +166,80 @@ class ModernRenderer(BaseRenderer):
     
     def _update_heights(self, bands: np.ndarray) -> None:
         """Update bar heights with smooth animation."""
-        # Set targets from analysis
+        amplitude_scale = self._settings.bar_animation.amplitude_scale
+        
+        # Auto mode (amplitude_scale = 0): use original hardcoded behavior
+        if amplitude_scale == 0:
+            self._update_heights_auto(bands)
+            return
+        
+        # Preset mode: use configurable settings
+        growth_rate = self._settings.bar_animation.growth_rate
+        decay_rate = self._settings.bar_animation.decay_rate
+        trigger_threshold = self._settings.bar_animation.trigger_threshold
+        
+        # Set targets from analysis with amplitude scaling
+        # amplitude_scale affects sensitivity (higher = more responsive to quiet sounds)
+        raw_bands = bands[:self.num_bars]
+        scaled_bands = raw_bands * (amplitude_scale / 15.0)  # Normalize around default of 15
+        self._target_heights[:len(scaled_bands)] = scaled_bands
+        
+        # Apply threshold - values below threshold are suppressed
+        self._target_heights = np.where(
+            self._target_heights < trigger_threshold,
+            self._target_heights * 0.3,  # Suppress quiet signals
+            self._target_heights
+        )
+        
+        # Scale to max height (but amplitude_scale still affects relative heights)
+        max_val = np.max(self._target_heights)
+        if max_val > 0:
+            # Scale factor depends on amplitude - higher amp = less auto-scaling
+            auto_scale = self._max_bar_height / max(max_val, 1.0)
+            # Blend between full auto-scale (amp=1) and minimal auto-scale (amp=30+)
+            blend = min(1.0, amplitude_scale / 30.0)
+            effective_scale = auto_scale * (1.0 - blend * 0.7)  # At high amp, reduce auto-scale by 70%
+            self._target_heights *= min(effective_scale, self._max_bar_height / 30)
+        
+        # Asymmetric smoothing: growth_rate when rising, decay_rate when falling
+        for i in range(self.num_bars):
+            diff = self._target_heights[i] - self._current_heights[i]
+            if diff > 0:
+                # Rising - use growth_rate (higher = faster rise)
+                self._current_heights[i] += diff * min(1.0, growth_rate * 5)
+            else:
+                # Falling - use decay_rate (higher = faster fall)
+                self._current_heights[i] += diff * min(1.0, decay_rate * 3)
+        
+        # Ensure minimum
+        self._current_heights = np.maximum(self._current_heights, 3.0)
+        
+        # Update peaks (must run for all modes)
+        self._update_peaks()
+    
+    def _update_heights_auto(self, bands: np.ndarray) -> None:
+        """Original hardcoded auto-scaling behavior (Auto preset)."""
+        # Set targets from analysis (no amplitude scaling)
         self._target_heights[:len(bands)] = bands[:self.num_bars]
         
-        # Scale to max height
+        # Scale to max height (full auto-scaling)
         max_val = np.max(self._target_heights)
         if max_val > 0:
             scale = self._max_bar_height / max(max_val, 1.0)
-            self._target_heights *= min(scale, self._max_bar_height / 50)  # Limit scaling
+            self._target_heights *= min(scale, self._max_bar_height / 50)  # Original limit
         
-        # Smooth towards target
+        # Smooth towards target (symmetric, fixed rate)
         diff = self._target_heights - self._current_heights
-        self._current_heights += diff * self._smoothing
+        self._current_heights += diff * 0.15  # Original smoothing factor
         
         # Ensure minimum
         self._current_heights = np.maximum(self._current_heights, 3.0)
         
         # Update peaks
+        self._update_peaks()
+    
+    def _update_peaks(self) -> None:
+        """Update peak hold indicators."""
         for i in range(self.num_bars):
             if self._current_heights[i] > self._peaks[i]:
                 self._peaks[i] = self._current_heights[i]
@@ -176,10 +260,10 @@ class ModernRenderer(BaseRenderer):
         base_hue = self._hue_offset + (index / self.num_bars) * 0.7
         color = rainbow_color_smooth(base_hue, saturation=0.8)
         
-        # Brighten on beat
-        if self._beat_pulse > 0.1:
-            white = Color(255, 255, 255)
-            color = lerp_color(color, white, self._beat_pulse * 0.3)
+        # Brighten and saturate on beat (configurable intensity)
+        beat_intensity = self._settings.visualization.beat_intensity
+        if self._beat_pulse > 0.1 and beat_intensity > 0:
+            color = brighten_saturate(color, self._beat_pulse * beat_intensity)
         
         return color
     
@@ -310,8 +394,11 @@ class ModernRenderer(BaseRenderer):
                 self._hue_offset -= 1.0
     
     def toggle_particles(self) -> bool:
-        """Toggle particle system."""
-        return self._particles.toggle()
+        """Toggle both particle layers together."""
+        result = self._particles_back.toggle()
+        # Sync front layer to match back layer state
+        self._particles_front.enabled = self._particles_back.enabled
+        return result
     
     def toggle_glow(self) -> bool:
         """Toggle glow effect."""
@@ -331,4 +418,5 @@ class ModernRenderer(BaseRenderer):
         self._peaks.fill(0)
         self._peak_velocities.fill(0)
         self._beat_pulse = 0.0
-        self._particles.reset()
+        self._particles_back.reset()
+        self._particles_front.reset()

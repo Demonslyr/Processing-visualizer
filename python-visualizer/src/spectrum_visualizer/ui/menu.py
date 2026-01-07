@@ -32,6 +32,7 @@ class MenuItem:
     label: str
     value_getter: Callable[[], str]
     action: Callable[[], None]
+    multiline: bool = False  # If True, value shows on second line
 
 
 @dataclass
@@ -61,16 +62,16 @@ class OverlayMenu:
     def __init__(
         self,
         settings: "Settings",
-        width: int = 300,
-        height: int = 250,
+        width: int = 420,
+        height: int = 560,
     ) -> None:
         """
         Initialize overlay menu.
         
         Args:
             settings: Application settings
-            width: Menu width
-            height: Menu height
+            width: Menu width (default 420)
+            height: Menu height (default 560)
         """
         self.settings = settings
         self.width = width
@@ -103,6 +104,7 @@ class OverlayMenu:
         label: str,
         value_getter: Callable[[], str],
         action: Callable[[], None],
+        multiline: bool = False,
     ) -> None:
         """
         Add a menu item.
@@ -112,8 +114,9 @@ class OverlayMenu:
             label: Display label
             value_getter: Function returning current value string
             action: Function to call when activated
+            multiline: If True, value displays on second line
         """
-        self._items.append(MenuItem(key, label, value_getter, action))
+        self._items.append(MenuItem(key, label, value_getter, action, multiline))
     
     def add_slider(
         self,
@@ -307,8 +310,16 @@ class OverlayMenu:
                 value = item.value_getter()
             except Exception:
                 value = "?"
-            value_text = self._font.render(value, True, MENU_HIGHLIGHT_COLOR)
-            menu_surface.blit(value_text, (self.width - value_text.get_width() - 20, y_offset))
+            
+            if item.multiline:
+                # Value on second line, indented
+                y_offset += line_height - 6  # Tighter spacing for multiline
+                value_text = self._font.render(value, True, MENU_HIGHLIGHT_COLOR)
+                menu_surface.blit(value_text, (40, y_offset))
+            else:
+                # Value on same line, right-aligned
+                value_text = self._font.render(value, True, MENU_HIGHLIGHT_COLOR)
+                menu_surface.blit(value_text, (self.width - value_text.get_width() - 20, y_offset))
             
             y_offset += line_height
         

@@ -1,0 +1,6 @@
+bar_animation:
+  amplitude_scale: 25
+  decay_rate: 0.06
+  growth_rate: 0.04
+  trigger_threshold: 3.0
+name: Aggressive Metal

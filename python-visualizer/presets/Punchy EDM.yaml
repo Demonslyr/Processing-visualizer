@@ -1,0 +1,6 @@
+bar_animation:
+  amplitude_scale: 17
+  decay_rate: 0.05
+  growth_rate: 0.028
+  trigger_threshold: 4.0
+name: Punchy EDM

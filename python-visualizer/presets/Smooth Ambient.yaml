@@ -1,0 +1,6 @@
+bar_animation:
+  amplitude_scale: 12
+  decay_rate: 0.01
+  growth_rate: 0.008
+  trigger_threshold: 1.5
+name: Smooth Ambient

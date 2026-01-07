@@ -1,0 +1,6 @@
+bar_animation:
+  amplitude_scale: 10
+  decay_rate: 0.008
+  growth_rate: 0.005
+  trigger_threshold: 2.0
+name: Chill Lofi

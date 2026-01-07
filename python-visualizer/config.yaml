@@ -8,8 +8,8 @@ audio:
 
 visualization:
   mode: "modern"  # "legacy" or "modern"
-  width: 800
-  height: 300
+  width: 1600
+  height: 600
   fps: 60
   bar_count: 50
 

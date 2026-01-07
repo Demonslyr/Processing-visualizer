@@ -15,7 +15,9 @@ import pygame
 from spectrum_visualizer.audio.capture import AudioCapture
 from spectrum_visualizer.audio.analysis import AudioAnalyzer
 from spectrum_visualizer.config.settings import Settings
-from spectrum_visualizer.config.persistence import save_config
+from spectrum_visualizer.config.persistence import (
+    save_config, list_presets, load_preset, save_preset, create_default_presets
+)
 from spectrum_visualizer.visualization.legacy import LegacyRenderer
 from spectrum_visualizer.visualization.modern import ModernRenderer
 from spectrum_visualizer.visualization.base import BaseRenderer
@@ -48,6 +50,18 @@ class SpectrumVisualizer:
             settings: Application settings
         """
         self.settings = settings
+        
+        # Initialize preset system
+        create_default_presets()
+        self._presets: list[str] = list_presets()
+        self._current_preset_index: int = -1  # -1 = custom/unsaved
+        
+        # Load Auto preset on startup if available
+        if "Auto" in self._presets:
+            auto_settings = load_preset("Auto")
+            if auto_settings:
+                self.settings.bar_animation = auto_settings
+                self._current_preset_index = self._presets.index("Auto")
         
         # Components (initialized in start())
         self._window: Optional[Window] = None
@@ -129,8 +143,8 @@ class SpectrumVisualizer:
         """Set up the overlay menu."""
         self._menu = OverlayMenu(
             self.settings,
-            width=360,
-            height=400,
+            width=420,
+            height=560,  # Increased to fit all items with two-line device
         )
         
         # Add menu items
@@ -138,6 +152,7 @@ class SpectrumVisualizer:
             "D", "Device",
             self._get_device_name,
             self._cycle_device,
+            multiline=True,  # Device name on second line
         )
         self._menu.add_item(
             "V", "Mode",
@@ -165,6 +180,16 @@ class SpectrumVisualizer:
             self._save_settings,
         )
         self._menu.add_item(
+            "L", "Load Preset",
+            self._get_preset_name,
+            self._cycle_preset,
+        )
+        self._menu.add_item(
+            "N", "Save as Preset",
+            lambda: "",
+            self._save_as_preset,
+        )
+        self._menu.add_item(
             "Q", "Quit",
             lambda: "",
             self.stop,
@@ -173,7 +198,7 @@ class SpectrumVisualizer:
         # Add slider controls for bar animation
         self._menu.add_slider(
             "1", "2", "Amplitude",
-            lambda: f"{self.settings.bar_animation.amplitude_scale:.0f}",
+            lambda: "Auto" if self.settings.bar_animation.amplitude_scale == 0 else f"{self.settings.bar_animation.amplitude_scale:.0f}",
             lambda: self._adjust_amplitude(-2),
             lambda: self._adjust_amplitude(2),
         )
@@ -195,15 +220,28 @@ class SpectrumVisualizer:
             lambda: self._adjust_threshold(-0.3),
             lambda: self._adjust_threshold(0.3),
         )
+        self._menu.add_slider(
+            "9", "0", "Dust Speed",
+            lambda: f"{self.settings.particles.speed:.1f}x",
+            lambda: self._adjust_particle_speed(-0.2),
+            lambda: self._adjust_particle_speed(0.2),
+        )
+        self._menu.add_slider(
+            "-", "=", "Beat Glow",
+            lambda: f"{self.settings.visualization.beat_intensity:.1f}",
+            lambda: self._adjust_beat_intensity(-0.1),
+            lambda: self._adjust_beat_intensity(0.1),
+        )
     
     def _get_device_name(self) -> str:
-        """Get current audio device name (truncated)."""
+        """Get current audio device name (truncated for very long names)."""
         if self._loopback and self._loopback.device:
             name = self._loopback.device.name
-            return name[:20] + "..." if len(name) > 23 else name
+            # Truncate very long names (>45 chars) but allow most to display fully
+            return name[:42] + "..." if len(name) > 45 else name
         elif self._audio and self._audio.device:
             name = self._audio.device.name
-            return name[:20] + "..." if len(name) > 23 else name
+            return name[:42] + "..." if len(name) > 45 else name
         return "Default Speakers"
     
     def _cycle_device(self) -> None:
@@ -283,11 +321,12 @@ class SpectrumVisualizer:
                 self._menu.show_status(f"Borderless: {'On' if borderless else 'Off'}")
     
     def _adjust_amplitude(self, delta: float) -> None:
-        """Adjust amplitude scaling factor."""
-        new_val = max(1, min(100, self.settings.bar_animation.amplitude_scale + delta))
+        """Adjust amplitude scaling factor. 0 = Auto mode."""
+        new_val = max(0, min(100, self.settings.bar_animation.amplitude_scale + delta))
         self.settings.bar_animation.amplitude_scale = new_val
         if self._menu:
-            self._menu.show_status(f"Amplitude: {new_val:.0f}")
+            display = "Auto" if new_val == 0 else f"{new_val:.0f}"
+            self._menu.show_status(f"Amplitude: {display}")
     
     def _adjust_growth(self, delta: float) -> None:
         """Adjust bar growth rate."""
@@ -310,6 +349,20 @@ class SpectrumVisualizer:
         if self._menu:
             self._menu.show_status(f"Threshold: {new_val:.1f}")
     
+    def _adjust_particle_speed(self, delta: float) -> None:
+        """Adjust particle/dust speed multiplier."""
+        new_val = max(0.2, min(3.0, self.settings.particles.speed + delta))
+        self.settings.particles.speed = new_val
+        if self._menu:
+            self._menu.show_status(f"Dust Speed: {new_val:.1f}x")
+    
+    def _adjust_beat_intensity(self, delta: float) -> None:
+        """Adjust beat glow/saturation intensity."""
+        new_val = max(0.0, min(2.0, self.settings.visualization.beat_intensity + delta))
+        self.settings.visualization.beat_intensity = new_val
+        if self._menu:
+            self._menu.show_status(f"Beat Glow: {new_val:.1f}")
+    
     def _save_settings(self) -> None:
         """Save current settings to file."""
         if save_config(self.settings):
@@ -318,6 +371,52 @@ class SpectrumVisualizer:
         else:
             if self._menu:
                 self._menu.show_status("Failed to save settings")
+    
+    def _get_preset_name(self) -> str:
+        """Get current preset name for display."""
+        if self._current_preset_index < 0 or self._current_preset_index >= len(self._presets):
+            return "Custom"
+        return self._presets[self._current_preset_index]
+    
+    def _cycle_preset(self) -> None:
+        """Cycle to next preset and apply it."""
+        if not self._presets:
+            if self._menu:
+                self._menu.show_status("No presets available")
+            return
+        
+        # Move to next preset
+        self._current_preset_index = (self._current_preset_index + 1) % len(self._presets)
+        preset_name = self._presets[self._current_preset_index]
+        
+        # Load and apply preset
+        preset_settings = load_preset(preset_name)
+        if preset_settings:
+            self.settings.bar_animation = preset_settings
+            if self._menu:
+                self._menu.show_status(f"Loaded: {preset_name}")
+        else:
+            if self._menu:
+                self._menu.show_status(f"Failed to load: {preset_name}")
+    
+    def _save_as_preset(self) -> None:
+        """Save current settings as a new preset."""
+        # Generate a unique name based on current settings
+        amp = int(self.settings.bar_animation.amplitude_scale)
+        growth = int(self.settings.bar_animation.growth_rate * 1000)
+        preset_name = f"Custom_{amp}_{growth}"
+        
+        if save_preset(preset_name, self.settings.bar_animation):
+            # Refresh preset list
+            self._presets = list_presets()
+            # Find the new preset in the list
+            if preset_name in self._presets:
+                self._current_preset_index = self._presets.index(preset_name)
+            if self._menu:
+                self._menu.show_status(f"Saved: {preset_name}")
+        else:
+            if self._menu:
+                self._menu.show_status("Failed to save preset")
     
     def run(self) -> None:
         """Run the main loop."""
